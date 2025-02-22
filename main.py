@@ -248,9 +248,9 @@ def plot_images(image_list, title):
 def debug(query_path="query_examples/6-16-526503800.jpg"):
     for k in [4, 8, 16, 32, 64]:
         for mode in ["hist", "hog"]:
+            extractor = FeatureExtractor(bins=k, mode=mode)
+            cbir_system = CBIRSystem("dataset/", extractor, limit=1000)
             for metric in ["euclidean", "cosine", "manhattan", "chi-square", "histogram intersection"]:
-                extractor = FeatureExtractor(bins=k, mode=mode)
-                cbir_system = CBIRSystem("dataset/", extractor, limit=1000)
                 results = cbir_system.retrieve_similar_images(query_path, top_k=10, metric=metric)
                 plot_images(results, title=f"CBIR Results - Bins: {k}, Mode: {mode}, Metric: {metric}")
                 print("Finished")
