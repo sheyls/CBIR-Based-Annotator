@@ -4,54 +4,73 @@ import numpy as np
 from skimage.feature import hog
 from PIL import Image
 import streamlit as st
-import pandas as pd
+import matplotlib.pyplot as plt
+from tqdm import tqdm
+from scipy.spatial.distance import euclidean, cosine, cityblock
+import math
+
 
 # ============================
 # Feature Extraction
 # ============================
 class FeatureExtractor:
-    def __init__(self, bins=(8, 8, 8)):
+    def __init__(self, bins=8, mode="hog"):
+        """
+        bins: Number of bins for the color histogram for each channel.
+        """
+        assert mode in ["hist", "hog"]
+        self.mode = mode
         self.bins = bins
 
     def preprocess_image(self, image_path):
+        """
+        Loads the image, converts from BGR to RGB, and (optionally) resizes it.
+        """
         image = cv2.imread(image_path)
         if image is None:
             raise ValueError(f"Unable to load image: {image_path}")
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        image = cv2.resize(image, (256, 256))
-        
+        # Optionally, resize the image (e.g., image = cv2.resize(image, (256, 256)))
         return image
 
     def extract_features(self, image):
-        # Color Histogram
-        hist = cv2.calcHist([image], [0, 1, 2], None, self.bins, [0, 256, 0, 256, 0, 256])
-        hist = cv2.normalize(hist, hist).flatten()
+        """
+        Extracts two types of features:
+         - Color histogram (RGB)
+         - HOG features (from grayscale image)
+        Then concatenates both feature vectors.
+        """
+        if self.mode == "hist":
+            # --- Color Histogram ---
+            hist = cv2.calcHist([image], [0, 1, 2], None, (self.bins,self.bins,self.bins), [0, 256, 0, 256, 0, 256])
+            features = cv2.normalize(hist, hist).flatten()
+        else:
+            # --- HOG Features ---
+            fixed_size = (1080, 1080)
+            image = cv2.resize(image, fixed_size)
 
-        # HOG Features
-        gray_image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
-        hog_features = hog(
-            gray_image,
-            orientations=9,
-            pixels_per_cell=(8, 8),
-            cells_per_block=(2, 2),
-            block_norm='L2-Hys',
-            transform_sqrt=True,
-            visualize=False,
-            feature_vector=True
-        )
-        features = np.concatenate([hist, hog_features])
+            gray_image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+
+            w, h = gray_image.shape
+            pixels_per_cell = (w//self.bins, h//self.bins)
+
+            features = hog(
+                gray_image,
+                orientations=9,
+                pixels_per_cell=pixels_per_cell,
+                cells_per_block=(2, 2),
+                block_norm='L2-Hys',
+                transform_sqrt=True,
+                visualize=False,
+                feature_vector=True
+            )
+
         return features
 
 # ============================
 # CBIR System
 # ============================
 class CBIRSystem:
-<<<<<<< HEAD
-    def __init__(self, dataset_folder, extractor):
-        self.dataset_folder = dataset_folder
-        self.extractor = extractor
-        self.image_features = {}  # {image_path: feature_vector}
-=======
     def __init__(self, dataset_folder, extractor, limit=None):
         """
         dataset_folder: Path to the folder containing the flower images.
@@ -61,16 +80,16 @@ class CBIRSystem:
         self.extractor = extractor
         self.image_features = {}  # Dictionary: {image_path: feature_vector}
         self.limit = limit
->>>>>>> fran
         self.load_dataset()
 
+
     def load_dataset(self):
+        """
+        Iterates over the dataset folder, processes each image, and extracts its features.
+        """
         valid_extensions = ('.jpg', '.jpeg', '.png', '.bmp', '.tiff')
         image_counter = 0
 
-<<<<<<< HEAD
-    def retrieve_similar_images(self, query_image_path, top_k=None):
-=======
         file_list = os.listdir(self.dataset_folder)
         if self.limit is not None:
             file_list = file_list[:self.limit]
@@ -95,17 +114,11 @@ class CBIRSystem:
         Given a query image, extract its features and return the top_k most similar images.
         Similarity is measured via the Euclidean distance.
         """
->>>>>>> fran
         query_image = self.extractor.preprocess_image(query_image_path)
         query_features = self.extractor.extract_features(query_image)
+
         results = []
         for image_path, features in self.image_features.items():
-            distance = np.linalg.norm(query_features - features)
-            results.append((image_path, distance))
-        results.sort(key=lambda x: x[1])
-        if top_k is None:
-            return results
-=======
             # Euclidean distance: lower distance means higher similarit
             if metric == "euclidean":
                 # Using SciPy’s Euclidean distance implementation
@@ -186,12 +199,17 @@ def main():
                 st.session_state.feedback[image_path] = "incorrect"
                 st.session_state.current_index += 1
                 st.experimental_rerun()
->>>>>>> fran
         else:
-            return results[:top_k]
+            st.success("No more images to review.")
+            st.write("Feedback:")
+            st.write(st.session_state.feedback)
+            # Optionally, allow restarting the process
+            if st.button("Restart"):
+                for key in ["results", "current_index", "feedback"]:
+                    if key in st.session_state:
+                        del st.session_state[key]
+                st.experimental_rerun()
 
-<<<<<<< HEAD
-=======
 
 def plot_images(image_list, title):
     n = len(image_list)
@@ -241,4 +259,3 @@ def debug(query_path="query_examples/6-16-526503800.jpg"):
 if __name__ == "__main__":
     debug()
     # main()
->>>>>>> fran
