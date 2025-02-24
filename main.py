@@ -14,7 +14,7 @@ import math
 # Feature Extraction
 # ============================
 class FeatureExtractor:
-    def __init__(self, bins=8, mode="hog"):
+    def __init__(self, bins=4, mode="hist"):
         """
         bins: Number of bins for the color histogram for each channel.
         """
@@ -22,16 +22,56 @@ class FeatureExtractor:
         self.mode = mode
         self.bins = bins
 
+
     def preprocess_image(self, image_path):
         """
-        Loads the image, converts from BGR to RGB, and (optionally) resizes it.
+        Carga la imagen, la convierte de BGR a RGB, elimina el fondo basado en el color de fondo
+        calculado a partir de las esquinas, y la redimensiona.
         """
         image = cv2.imread(image_path)
         if image is None:
             raise ValueError(f"Unable to load image: {image_path}")
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        # Optionally, resize the image (e.g., image = cv2.resize(image, (256, 256)))
-        return image
+
+        # Obtener dimensiones de la imagen
+        h, w, _ = image.shape
+
+        # Tomar muestras de colores de fondo de las esquinas (superior izquierda, superior derecha,
+        # inferior izquierda, inferior derecha)
+        corner_pixels = np.concatenate([
+            image[0:10, 0:10],    # Esquina superior izquierda
+            image[0:10, -10:],    # Esquina superior derecha
+            image[-10:, 0:10],    # Esquina inferior izquierda
+            image[-10:, -10:]     # Esquina inferior derecha
+        ])
+
+        # Aplanar para tener una lista de píxeles con forma (N, 3)
+        corner_pixels = corner_pixels.reshape(-1, 3)
+        
+        # Calcular el color de fondo (mediana de todos los píxeles de las esquinas)
+        bg_color = np.median(corner_pixels, axis=0)
+        bg_color = np.array(bg_color, dtype=np.uint8)
+
+        # Crear un array del mismo tamaño que la imagen, con el color de fondo
+        bg_color_full = np.full_like(image, bg_color)
+
+        # Definir un umbral para la similitud al fondo
+        threshold = 40  # Ajusta según necesites
+
+        # Calcular la diferencia euclidiana entre cada píxel y el color de fondo
+        diff = np.linalg.norm(image - bg_color_full, axis=2)
+
+        # Crear una máscara: píxeles con diferencia mayor al umbral se consideran primer plano
+        mask = (diff > threshold).astype(np.uint8) * 255  # Formato 0-255
+
+        # Aplicar la máscara para extraer el primer plano
+        foreground = cv2.bitwise_and(image, image, mask=mask)
+
+        # Redimensionar la imagen resultante
+        fixed_size = (1080, 1080)
+        foreground = cv2.resize(foreground, fixed_size)
+        return foreground
+
 
     def extract_features(self, image):
         """
@@ -46,8 +86,8 @@ class FeatureExtractor:
             features = cv2.normalize(hist, hist).flatten()
         else:
             # --- HOG Features ---
-            fixed_size = (1080, 1080)
-            image = cv2.resize(image, fixed_size)
+            #fixed_size = (1080, 1080)
+            #image = cv2.resize(image, fixed_size)
 
             gray_image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
 
@@ -109,7 +149,7 @@ class CBIRSystem:
                     image_counter += 1
                 pbar.update(1)  # Update progress bar
 
-    def retrieve_similar_images(self, query_image_path, top_k=10, metric="euclidean"):
+    def retrieve_similar_images(self, query_image_path, top_k=10, metric="manhattan"):
         """
         Given a query image, extract its features and return the top_k most similar images.
         Similarity is measured via the Euclidean distance.

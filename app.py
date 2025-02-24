@@ -44,7 +44,7 @@ def main():
     if st.sidebar.button("Execute Retrieval"):
         if dataset_folder and query_image_path and reference_flower_name:
             try:
-                extractor = FeatureExtractor(bins=(8, 8, 8))
+                extractor = FeatureExtractor()
                 cbir_system = CBIRSystem(dataset_folder, extractor)
                 results = cbir_system.retrieve_similar_images(query_image_path, top_k=top_k)
                 st.session_state.current_results = results
