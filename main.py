@@ -111,7 +111,7 @@ class FeatureExtractor:
 # CBIR System
 # ============================
 class CBIRSystem:
-    def __init__(self, dataset_folder, extractor, limit=None):
+    def __init__(self, dataset_folder, extractor, limit=None, metric="manhattan", use_weights=False):
         """
         dataset_folder: Path to the folder containing the flower images.
         extractor: An instance of FeatureExtractor to process images.
@@ -121,7 +121,12 @@ class CBIRSystem:
         self.image_features = {}  # Dictionary: {image_path: feature_vector}
         self.limit = limit
         self.load_dataset()
+        self.use_weights = use_weights
         self.weights = None
+        self.lr = 0.001
+        self.metric = metric
+        if self.use_weights and self.metric not in ["manhattan", "euclidean"]:
+            raise ValueError(f"Metric must be either 'manhattan' or 'euclidean' if finetuning is enabled")
 
 
     def load_dataset(self):
@@ -150,20 +155,20 @@ class CBIRSystem:
                     image_counter += 1
                 pbar.update(1)  # Update progress bar
 
-    def retrieve_similar_images(self, query_image_path, top_k=10, metric="manhattan", use_weights=False):
+    def retrieve_similar_images(self, query_image_path, top_k=10):
         """
         Given a query image, extract its features and return the top_k most similar images.
         Similarity is measured via the Euclidean distance.
         """
         query_image = self.extractor.preprocess_image(query_image_path)
         query_features = self.extractor.extract_features(query_image)
-        if use_weights is True and self.weights is None:
+        if self.use_weights is True and self.weights is None:
             self.weights = np.ones(query_features.shape)
 
         results = []
         for image_path, features in self.image_features.items():
             # Euclidean distance: lower distance means higher similarit
-            if metric == "euclidean":
+            if self.metric == "euclidean":
                 if self.weights is not None:
                     # Compute weighted Euclidean distance as sqrt(sum_i w_i * (x_i-y_i)^2)
                     diff = query_features - features
@@ -171,23 +176,23 @@ class CBIRSystem:
                 else:
                     distance = euclidean(query_features, features)
 
-            elif metric == "manhattan":
+            elif self.metric == "manhattan":
                 if self.weights is not None:
                     # Weighted Manhattan distance: sum_i (w_i * |x_i-y_i|)
                     distance = np.sum(self.weights * np.abs(query_features - features))
                 else:
                     distance = cityblock(query_features, features)
 
-            elif metric == "cosine":
+            elif self.metric == "cosine":
                 # Using SciPy’s cosine distance (which returns 1 - cosine similarity)
                 distance = cosine(query_features, features)
 
-            elif metric == "histogram intersection":
+            elif self.metric == "histogram intersection":
                 distance = 1 - cv2.compareHist(query_features.astype(np.float32),
                                                features.astype(np.float32),
                                                cv2.HISTCMP_INTERSECT)
 
-            elif metric == "chi-square":
+            elif self.metric == "chi-square":
                 distance = cv2.compareHist(query_features.astype(np.float32),
                                            features.astype(np.float32),
                                            cv2.HISTCMP_CHISQR)
@@ -199,8 +204,76 @@ class CBIRSystem:
         results.sort(key=lambda x: x[1])
         return results[:top_k]
 
-    def finetune(self, query, good, bad):
-        pass
+    def finetune(self, query_img, correct_imgs, incorrect_imgs):
+        """
+        Fine-tunes the weight vector by performing a gradient update based on a triplet loss.
+
+        Parameters:
+          query_img      : The query image.
+          correct_imgs   : A list of images that are similar/positive examples.
+          incorrect_imgs : A list of images that are dissimilar/negative examples.
+
+        Assumptions:
+          - self.extract_features(image) returns a feature vector for an image.
+          - self.weights is a numpy array of shape (n_features,).
+          - self.metric is either "euclidean" or "manhattan".
+          - Optionally, self.lr (learning rate) and self.margin (margin for the loss) are defined.
+        """
+        # Set hyperparameters (or use defaults)
+        lr = getattr(self, 'lr', 0.001)
+        margin = getattr(self, 'margin', 1.0)
+        epsilon = 1e-8  # small constant to avoid division by zero
+
+        # Extract features for the query, correct, and incorrect images.
+        query_features = self.extract_features(query_img)
+        correct_features = [self.extract_features(img) for img in correct_imgs]
+        incorrect_features = [self.extract_features(img) for img in incorrect_imgs]
+
+        # Initialize gradient accumulator for the weights.
+        grad = np.zeros_like(self.weights)
+
+        # Iterate over each positive and negative pair.
+        for pos_feat in correct_features:
+            # Compute distance and its gradient contribution for the positive (correct) example.
+            if self.metric == "euclidean":
+                diff_pos = query_features - pos_feat
+                # Weighted Euclidean distance: sqrt(sum_i w_i * (diff_i)^2)
+                pos_dist = np.sqrt(np.sum(self.weights * (diff_pos ** 2))) + epsilon
+            elif self.metric == "manhattan":
+                diff_pos = np.abs(query_features - pos_feat)
+                # Weighted Manhattan distance: sum_i w_i * |diff_i|
+                pos_dist = np.sum(self.weights * diff_pos)
+            else:
+                raise ValueError("Unsupported metric: " + self.metric)
+
+            for neg_feat in incorrect_features:
+                # Compute distance and its gradient contribution for the negative (incorrect) example.
+                if self.metric == "euclidean":
+                    diff_neg = query_features - neg_feat
+                    neg_dist = np.sqrt(np.sum(self.weights * (diff_neg ** 2))) + epsilon
+                elif self.metric == "manhattan":
+                    diff_neg = np.abs(query_features - neg_feat)
+                    neg_dist = np.sum(self.weights * diff_neg)
+                else:
+                    raise ValueError("Unsupported metric: " + self.metric)
+
+                # Compute the triplet loss.
+                loss = margin + pos_dist - neg_dist
+                if loss > 0:
+                    # If the loss is active, accumulate gradients.
+                    if self.metric == "euclidean":
+                        # For weighted Euclidean:
+                        # d(pos_dist)/d(w_i) = (1/(2*pos_dist)) * (diff_pos_i)^2
+                        # d(neg_dist)/d(w_i) = (1/(2*neg_dist)) * (diff_neg_i)^2
+                        grad += (1 / (2 * pos_dist)) * (diff_pos ** 2) - (1 / (2 * neg_dist)) * (diff_neg ** 2)
+                    elif self.metric == "manhattan":
+                        # For weighted Manhattan, the derivative with respect to w_i is |diff_i|.
+                        grad += diff_pos - diff_neg
+
+        # Update the weights using a simple gradient descent step.
+        self.weights -= lr * grad
+        self.weights = np.maximum(self.weights, 0)
+
 
 # ============================
 # Streamlit Interface for Feedback
