@@ -220,14 +220,14 @@ class CBIRSystem:
           - Optionally, self.lr (learning rate) and self.margin (margin for the loss) are defined.
         """
         # Set hyperparameters (or use defaults)
-        lr = getattr(self, 'lr', 0.001)
-        margin = getattr(self, 'margin', 1.0)
         epsilon = 1e-8  # small constant to avoid division by zero
 
         # Extract features for the query, correct, and incorrect images.
-        query_features = self.extract_features(query_img)
-        correct_features = [self.extract_features(img) for img in correct_imgs]
-        incorrect_features = [self.extract_features(img) for img in incorrect_imgs]
+        query_image = self.extractor.preprocess_image(query_img)
+        query_features = self.extractor.extract_features(query_image)
+
+        correct_features = [self.extractor.extract_features(self.extractor.preprocess_image(img)) for img in correct_imgs]
+        incorrect_features = [self.extractor.extract_features(self.extractor.preprocess_image(img)) for img in incorrect_imgs]
 
         # Initialize gradient accumulator for the weights.
         grad = np.zeros_like(self.weights)
@@ -239,40 +239,30 @@ class CBIRSystem:
                 diff_pos = query_features - pos_feat
                 # Weighted Euclidean distance: sqrt(sum_i w_i * (diff_i)^2)
                 pos_dist = np.sqrt(np.sum(self.weights * (diff_pos ** 2))) + epsilon
+                grad += diff_pos / pos_dist
             elif self.metric == "manhattan":
                 diff_pos = np.abs(query_features - pos_feat)
                 # Weighted Manhattan distance: sum_i w_i * |diff_i|
-                pos_dist = np.sum(self.weights * diff_pos)
+                grad += diff_pos
             else:
                 raise ValueError("Unsupported metric: " + self.metric)
 
-            for neg_feat in incorrect_features:
-                # Compute distance and its gradient contribution for the negative (incorrect) example.
-                if self.metric == "euclidean":
-                    diff_neg = query_features - neg_feat
-                    neg_dist = np.sqrt(np.sum(self.weights * (diff_neg ** 2))) + epsilon
-                elif self.metric == "manhattan":
-                    diff_neg = np.abs(query_features - neg_feat)
-                    neg_dist = np.sum(self.weights * diff_neg)
-                else:
-                    raise ValueError("Unsupported metric: " + self.metric)
-
-                # Compute the triplet loss.
-                loss = margin + pos_dist - neg_dist
-                if loss > 0:
-                    # If the loss is active, accumulate gradients.
-                    if self.metric == "euclidean":
-                        # For weighted Euclidean:
-                        # d(pos_dist)/d(w_i) = (1/(2*pos_dist)) * (diff_pos_i)^2
-                        # d(neg_dist)/d(w_i) = (1/(2*neg_dist)) * (diff_neg_i)^2
-                        grad += (1 / (2 * pos_dist)) * (diff_pos ** 2) - (1 / (2 * neg_dist)) * (diff_neg ** 2)
-                    elif self.metric == "manhattan":
-                        # For weighted Manhattan, the derivative with respect to w_i is |diff_i|.
-                        grad += diff_pos - diff_neg
+        for neg_feat in incorrect_features:
+            # Compute distance and its gradient contribution for the negative (incorrect) example.
+            if self.metric == "euclidean":
+                diff_neg = query_features - neg_feat
+                neg_dist = np.sqrt(np.sum(self.weights * (diff_neg ** 2))) + epsilon
+                grad -= diff_neg / neg_dist
+            elif self.metric == "manhattan":
+                diff_neg = np.abs(query_features - neg_feat)
+                grad -= diff_neg
+            else:
+                raise ValueError("Unsupported metric: " + self.metric)
 
         # Update the weights using a simple gradient descent step.
-        self.weights -= lr * grad
-        self.weights = np.maximum(self.weights, 0)
+        self.weights -= self.lr * grad
+        print(self.lr * grad)
+        self.weights = np.maximum(self.weights, epsilon)
 
 
 # ============================
@@ -329,6 +319,14 @@ def main():
             st.success("No more images to review.")
             st.write("Feedback:")
             st.write(st.session_state.feedback)
+            st.write("Finetuning...")
+
+            correct = [path for path, state in st.session_state.feedback.items() if state == "correct"]
+            incorrect = [path for path, state in st.session_state.feedback.items() if state == "incorrect"]
+
+            cbir_system.finetune(query_image_path, correct, incorrect)
+            st.write("Finetuning finished.")
+
             # Optionally, allow restarting the process
             if st.button("Restart"):
                 for key in ["results", "current_index", "feedback"]:
@@ -374,9 +372,9 @@ def plot_images(image_list, title):
 def debug(query_path="query_examples/6-16-526503800.jpg"):
     for k in [4, 8, 16, 32, 64]:
         for mode in ["hist", "hog"]:
-            for metric in ["euclidean", "cosine", "manhattan", "chi-square", "histogram intersection"]:
-                extractor = FeatureExtractor(bins=k, mode=mode)
-                cbir_system = CBIRSystem("dataset/", extractor, limit=1000)
+            extractor = FeatureExtractor(bins=k, mode=mode)
+            for metric in ["euclidean", "manhattan"]:
+                cbir_system = CBIRSystem("dataset/", extractor, metric=metric, use_weights=True, limit=1000)
                 results = cbir_system.retrieve_similar_images(query_path, top_k=10, metric=metric)
                 plot_images(results, title=f"CBIR Results - Bins: {k}, Mode: {mode}, Metric: {metric}")
                 print("Finished")

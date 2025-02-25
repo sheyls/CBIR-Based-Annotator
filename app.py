@@ -78,9 +78,14 @@ def main():
                 st.session_state.global_annotations.append({"image": image_path, "flower_name": reference_name})
                 st.session_state.current_index += 1
                 st.experimental_rerun()
+                cbir_system.finetune(query_image_path, [image_path], [])
+                st.write("Finetuned")
+
             if col2.button("No"):
                 st.session_state.current_index += 1
                 st.experimental_rerun()
+                cbir_system.finetune(query_image_path, [], [image_path])
+                st.write("Finetuned")
         else:
             st.success("Annotation session completed.")
             annotations_df = pd.DataFrame(st.session_state.global_annotations)
