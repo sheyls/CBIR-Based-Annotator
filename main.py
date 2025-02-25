@@ -18,9 +18,10 @@ class FeatureExtractor:
         """
         bins: Number of bins for the color histogram for each channel.
         """
-        assert mode in ["hist", "hog"]
+        assert mode in ["hist", "hog", "both"]
         self.mode = mode
         self.bins = bins
+        self.output_info = None
 
 
     def preprocess_image(self, image_path):
@@ -80,11 +81,14 @@ class FeatureExtractor:
          - HOG features (from grayscale image)
         Then concatenates both feature vectors.
         """
-        if self.mode == "hist":
+        if self.mode == "hist" or self.mode == "both":
             # --- Color Histogram ---
             hist = cv2.calcHist([image], [0, 1, 2], None, (self.bins,self.bins,self.bins), [0, 256, 0, 256, 0, 256])
-            features = cv2.normalize(hist, hist).flatten()
+            hist_features = cv2.normalize(hist, hist).flatten()
         else:
+            hist_features = np.zeros(shape=())
+
+        if self.mode != "hist":
             # --- HOG Features ---
             #fixed_size = (1080, 1080)
             #image = cv2.resize(image, fixed_size)
@@ -94,7 +98,7 @@ class FeatureExtractor:
             w, h = gray_image.shape
             pixels_per_cell = (w//self.bins, h//self.bins)
 
-            features = hog(
+            hog_features = hog(
                 gray_image,
                 orientations=9,
                 pixels_per_cell=pixels_per_cell,
@@ -104,7 +108,12 @@ class FeatureExtractor:
                 visualize=False,
                 feature_vector=True
             )
+        else:
+            hog_features = np.zeros(shape=())
 
+        features = np.concatenate([hist_features, hog_features])
+        if self.output_info is None:
+            self.output_info = (hist_features.size, hog_features.size)
         return features
 
 # ============================
@@ -124,6 +133,8 @@ class CBIRSystem:
         self.use_weights = use_weights
         self.weights = None
         self.lr = 0.001
+        self.beta = 0.5
+        self.grad = None
         self.metric = metric
         if self.use_weights and self.metric not in ["manhattan", "euclidean"]:
             raise ValueError(f"Metric must be either 'manhattan' or 'euclidean' if finetuning is enabled")
@@ -164,6 +175,9 @@ class CBIRSystem:
         query_features = self.extractor.extract_features(query_image)
         if self.use_weights is True and self.weights is None:
             self.weights = np.ones(query_features.shape)
+            a,b = self.extractor.output_info
+            self.weights[0:a] = 0.7 / a
+            self.weights[a+1, a+b] = 0.3 / b
 
         results = []
         for image_path, features in self.image_features.items():
@@ -260,8 +274,12 @@ class CBIRSystem:
                 raise ValueError("Unsupported metric: " + self.metric)
 
         # Update the weights using a simple gradient descent step.
-        self.weights -= self.lr * grad
-        print(self.lr * grad)
+        if self.grad is None:
+            self.grad = grad
+        else:
+            self.grad = self.beta * self.grad + (1 - self.beta) * grad
+        self.weights -= self.lr * self.grad
+        print(self.lr * self.grad)
         self.weights = np.maximum(self.weights, epsilon)
 
 
