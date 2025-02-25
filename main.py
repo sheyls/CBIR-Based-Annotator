@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 from scipy.spatial.distance import euclidean, cosine, cityblock
 import math
+import pandas as pd
 
 
 # ============================
@@ -122,7 +123,7 @@ class CBIRSystem:
         """
         self.dataset_folder = dataset_folder
         self.extractor = extractor
-        self.image_features = {}  # Dictionary: {image_path: feature_vector}
+        self.image_features = None  # DataFrame: {Index image_path: feature feature_vector}
         self.limit = limit
         self.load_dataset()
         self.use_weights = use_weights
@@ -141,25 +142,54 @@ class CBIRSystem:
         """
         valid_extensions = ('.jpg', '.jpeg', '.png', '.bmp', '.tiff')
         image_counter = 0
+        preprocessed_file = "./preprocessed_dataset.csv"
 
         file_list = os.listdir(self.dataset_folder)
         if self.limit is not None:
             file_list = file_list[:self.limit]
 
-        with tqdm(total=len(file_list), desc="Processing Images", unit="img") as pbar:
-            for filename in file_list:
-                if filename.lower().endswith(valid_extensions):
-                    image_path = os.path.join(self.dataset_folder, filename)
-                    try:
-                        image = self.extractor.preprocess_image(image_path)
-                        features = self.extractor.extract_features(image)
-                        # print(features.shape)
-                        self.image_features[image_path] = features
-                    except Exception as e:
-                        print(f"\nError processing {image_path}: {e}")
+        # Check if the preprocessed features already exist
+        if os.path.exists(preprocessed_file):
+            print("Preprocessed features found. Loading features from CSV...")
+            # Load features from CSV into a DataFrame (assuming the image paths are the index)
+            self.image_features = pd.read_csv(preprocessed_file, index_col=0)
+        else:
+            # Ensure the preprocessing folder exists
+            image_paths = []
+            features_list = []
+            image_counter = 0  # Initialize image counter if not already defined
 
-                    image_counter += 1
-                pbar.update(1)  # Update progress bar
+            # Process images if no preprocessed CSV is found
+            with tqdm(total=len(file_list), desc="Processing Images", unit="img") as pbar:
+                for filename in file_list:
+                    if filename.lower().endswith(valid_extensions):
+                        image_path = os.path.join(self.dataset_folder, filename)
+                        try:
+                            # Preprocess image and extract features
+                            image = self.extractor.preprocess_image(image_path)
+                            features = self.extractor.extract_features(image)
+
+                            # Store the image path and its features
+                            image_paths.append(image_path)
+                            features_list.append(features)
+                        except Exception as e:
+                            print(f"\nError processing {image_path}: {e}")
+
+                        image_counter += 1
+                        if image_counter > self.limit:
+                            break
+
+                    pbar.update(1)
+
+            # Create a DataFrame: rows are images (indexed by their paths) and columns are features
+            df_features = pd.DataFrame(features_list, index=image_paths)
+            df_features.index.name = "image_path"
+
+            # Save the DataFrame to CSV in the preprocessing folder
+            df_features.to_csv(preprocessed_file)
+
+            # Optionally, assign the DataFrame to self.image_features for later use
+            self.image_features = df_features
 
     def retrieve_similar_images(self, query_image_path, top_k=10):
         """
@@ -176,7 +206,9 @@ class CBIRSystem:
                 self.weights[a+1:a+b] = 0.3 / b
 
         results = []
-        for image_path, features in self.image_features.items():
+        for row in self.image_features.itertuples(index=True, name=None):
+            image_path = row[0]  # First element is the index
+            features = np.array(row[1:])  # Remaining elements are feature values as a tuple
             # Euclidean distance: lower distance means higher similarit
             if self.metric == "euclidean":
                 if self.weights is not None:
