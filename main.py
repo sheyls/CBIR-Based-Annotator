@@ -122,7 +122,7 @@ class FeatureExtractor:
 # CBIR System
 # ============================
 class CBIRSystem:
-    def __init__(self, dataset_folder, extractor, limit=None, metric="manhattan", use_weights=False):
+    def __init__(self, dataset_folder, extractor, limit=None, metric="manhattan", use_weights=True):
         """
         dataset_folder: Path to the folder containing the flower images.
         extractor: An instance of FeatureExtractor to process images.
