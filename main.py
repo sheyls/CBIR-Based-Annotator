@@ -86,7 +86,7 @@ class FeatureExtractor:
             hist = cv2.calcHist([image], [0, 1, 2], None, (self.bins,self.bins,self.bins), [0, 256, 0, 256, 0, 256])
             hist_features = cv2.normalize(hist, hist).flatten()
         else:
-            hist_features = np.zeros(shape=())
+            hist_features = np.zeros(shape=(0,))
 
         if self.mode != "hist":
             # --- HOG Features ---
@@ -109,7 +109,9 @@ class FeatureExtractor:
                 feature_vector=True
             )
         else:
-            hog_features = np.zeros(shape=())
+            hog_features = np.zeros(shape=(0,))
+
+        print(hog_features.shape, hist_features.shape)
 
         features = np.concatenate([hist_features, hog_features])
         if self.output_info is None:
@@ -177,7 +179,7 @@ class CBIRSystem:
             self.weights = np.ones(query_features.shape)
             a,b = self.extractor.output_info
             self.weights[0:a] = 0.7 / a
-            self.weights[a+1, a+b] = 0.3 / b
+            self.weights[a+1:a+b] = 0.3 / b
 
         results = []
         for image_path, features in self.image_features.items():
@@ -388,14 +390,17 @@ def plot_images(image_list, title):
 
 
 def debug(query_path="query_examples/6-16-526503800.jpg"):
-    for k in [4, 8, 16, 32, 64]:
-        for mode in ["hist", "hog"]:
+
+    for k in [8]:
+        for mode in ["both"]:
             extractor = FeatureExtractor(bins=k, mode=mode)
             for metric in ["euclidean", "manhattan"]:
-                cbir_system = CBIRSystem("dataset/", extractor, metric=metric, use_weights=True, limit=1000)
-                results = cbir_system.retrieve_similar_images(query_path, top_k=10, metric=metric)
-                plot_images(results, title=f"CBIR Results - Bins: {k}, Mode: {mode}, Metric: {metric}")
-                print("Finished")
+                cbir_system = CBIRSystem("dataset/", extractor, metric=metric, use_weights=True, limit=100)
+                for it in range(19):
+                    results = cbir_system.retrieve_similar_images(query_path, top_k=6)
+                    plot_images(results, title=f"CBIR Results - Bins: {k}, Mode: {mode}, Metric: {metric}")
+                    cbir_system.finetune(query_path, [results[0][0]], [])
+                    print("Finished")
 
 
 if __name__ == "__main__":
