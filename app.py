@@ -62,7 +62,7 @@ def main():
         reference_name = st.session_state.reference_name
 
         if current_index < len(results):
-            image_path, score = results[current_index]
+            image_path, features, score = results[current_index]
             st.subheader(f"Image {current_index + 1}/{len(results)}")
             st.write(f"Similarity Score: {score:.2f}")
             try:
@@ -75,7 +75,7 @@ def main():
             st.write(f"Is this image of **{reference_name}**?")
             col1, col2 = st.columns(2)
             if col1.button("Yes"):
-                st.session_state.global_annotations.append({"image": image_path, "flower_name": reference_name})
+                st.session_state.global_annotations.append({"image": image_path, "features_vector": features ,"flower_name": reference_name})
                 st.session_state.current_index += 1
                 st.rerun()
             if col2.button("No"):
@@ -95,6 +95,11 @@ def main():
                     if key in st.session_state:
                         del st.session_state[key]
                 st.rerun()
+            
+            # Remove the query image
+            if query_image_path:
+                import os
+                os.remove(query_image_path)
 
 if __name__ == "__main__":
     main()

@@ -33,43 +33,33 @@ class FeatureExtractor:
             raise ValueError(f"Unable to load image: {image_path}")
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
-        # Obtener dimensiones de la imagen
         h, w, _ = image.shape
 
-        # Tomar muestras de colores de fondo de las esquinas (superior izquierda, superior derecha,
-        # inferior izquierda, inferior derecha)
         corner_pixels = np.concatenate([
-            image[0:10, 0:10],    # Esquina superior izquierda
-            image[0:10, -10:],    # Esquina superior derecha
-            image[-10:, 0:10],    # Esquina inferior izquierda
-            image[-10:, -10:]     # Esquina inferior derecha
+            image[0:10, 0:10],   # Sup-izq
+            image[0:10, -10:],   # Sup-der
+            image[-10:, 0:10],   # Inf-izq
+            image[-10:, -10:]    # Inf-der
         ])
 
-        # Aplanar para tener una lista de píxeles con forma (N, 3)
         corner_pixels = corner_pixels.reshape(-1, 3)
         
-        # Calcular el color de fondo (mediana de todos los píxeles de las esquinas)
         bg_color = np.median(corner_pixels, axis=0)
         bg_color = np.array(bg_color, dtype=np.uint8)
 
-        # Crear un array del mismo tamaño que la imagen, con el color de fondo
         bg_color_full = np.full_like(image, bg_color)
 
-        # Definir un umbral para la similitud al fondo
-        threshold = 40  # Ajusta según necesites
+        threshold = 40  
 
-        # Calcular la diferencia euclidiana entre cada píxel y el color de fondo
         diff = np.linalg.norm(image - bg_color_full, axis=2)
 
-        # Crear una máscara: píxeles con diferencia mayor al umbral se consideran primer plano
-        mask = (diff > threshold).astype(np.uint8) * 255  # Formato 0-255
+        mask = (diff > threshold).astype(np.uint8) * 255  # 0-255
 
-        # Aplicar la máscara para extraer el primer plano
         foreground = cv2.bitwise_and(image, image, mask=mask)
 
-        # Redimensionar la imagen resultante
         fixed_size = (1080, 1080)
         foreground = cv2.resize(foreground, fixed_size)
+
         return foreground
 
 
@@ -185,8 +175,8 @@ class CBIRSystem:
             else:
                 raise ValueError("Invalid metric")
 
-            results.append((image_path, distance))
-        results.sort(key=lambda x: x[1])
+            results.append((image_path, features, distance))
+        results.sort(key=lambda x: x[2])
         return results[:top_k]
 
 # ============================
@@ -243,7 +233,6 @@ def main():
             st.success("No more images to review.")
             st.write("Feedback:")
             st.write(st.session_state.feedback)
-            # Optionally, allow restarting the process
             if st.button("Restart"):
                 for key in ["results", "current_index", "feedback"]:
                     if key in st.session_state:
@@ -266,7 +255,6 @@ def plot_images(image_list, title):
     else:
         axes = [axes]
 
-    # Plot each image in the mosaic
     for i, ax in enumerate(axes):
         if i < n:
             img_path, _ = image_list[i]
@@ -274,12 +262,10 @@ def plot_images(image_list, title):
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             ax.imshow(img)
             ax.axis("off")
-            ax.set_title(img_path, fontsize=8)  # You can customize font size
+            ax.set_title(img_path, fontsize=8) 
         else:
-            # Hide any unused subplots
             ax.axis("off")
 
-    # Set the overall title using suptitle
     fig.suptitle(title, fontsize=14)
     plt.tight_layout(rect=[0, 0, 1, 0.95])
     plt.show()
