@@ -245,7 +245,7 @@ def plot_images(image_list, title):
     plt.show()
 
 
-def debug(query_path="query_examples/6-16-526503800.jpg"):
+def debug(query_path="query_examples/red.jpg"):
     for k in [4, 8, 16, 32, 64]:
         for mode in ["hist", "hog"]:
             extractor = FeatureExtractor(bins=k, mode=mode)
