@@ -18,9 +18,10 @@ class FeatureExtractor:
         """
         bins: Number of bins for the color histogram for each channel.
         """
-        assert mode in ["hist", "hog"]
+        assert mode in ["hist", "hog", "both"]
         self.mode = mode
         self.bins = bins
+        self.output_info = None
 
 
     def preprocess_image(self, image_path):
@@ -43,23 +44,26 @@ class FeatureExtractor:
         ])
 
         corner_pixels = corner_pixels.reshape(-1, 3)
-        
+
         bg_color = np.median(corner_pixels, axis=0)
         bg_color = np.array(bg_color, dtype=np.uint8)
 
         bg_color_full = np.full_like(image, bg_color)
 
-        threshold = 40  
+        threshold = 40
 
+        # Calcular la diferencia euclidiana entre cada píxel y el color de fondo
         diff = np.linalg.norm(image - bg_color_full, axis=2)
 
-        mask = (diff > threshold).astype(np.uint8) * 255  # 0-255
+        # Crear una máscara: píxeles con diferencia mayor al umbral se consideran primer plano
+        mask = (diff > threshold).astype(np.uint8) * 255  # Formato 0-255
 
+        # Aplicar la máscara para extraer el primer plano
         foreground = cv2.bitwise_and(image, image, mask=mask)
 
+        # Redimensionar la imagen resultante
         fixed_size = (1080, 1080)
         foreground = cv2.resize(foreground, fixed_size)
-
         return foreground
 
 
@@ -70,11 +74,14 @@ class FeatureExtractor:
          - HOG features (from grayscale image)
         Then concatenates both feature vectors.
         """
-        if self.mode == "hist":
+        if self.mode == "hist" or self.mode == "both":
             # --- Color Histogram ---
             hist = cv2.calcHist([image], [0, 1, 2], None, (self.bins,self.bins,self.bins), [0, 256, 0, 256, 0, 256])
-            features = cv2.normalize(hist, hist).flatten()
+            hist_features = cv2.normalize(hist, hist).flatten()
         else:
+            hist_features = np.zeros(shape=(0,))
+
+        if self.mode != "hist":
             # --- HOG Features ---
             #fixed_size = (1080, 1080)
             #image = cv2.resize(image, fixed_size)
@@ -84,7 +91,7 @@ class FeatureExtractor:
             w, h = gray_image.shape
             pixels_per_cell = (w//self.bins, h//self.bins)
 
-            features = hog(
+            hog_features = hog(
                 gray_image,
                 orientations=9,
                 pixels_per_cell=pixels_per_cell,
@@ -94,14 +101,21 @@ class FeatureExtractor:
                 visualize=False,
                 feature_vector=True
             )
+        else:
+            hog_features = np.zeros(shape=(0,))
 
+        print(hog_features.shape, hist_features.shape)
+
+        features = np.concatenate([hist_features, hog_features])
+        if self.output_info is None:
+            self.output_info = (hist_features.size, hog_features.size)
         return features
 
 # ============================
 # CBIR System
 # ============================
 class CBIRSystem:
-    def __init__(self, dataset_folder, extractor, limit=None):
+    def __init__(self, dataset_folder, extractor, limit=None, metric="manhattan", use_weights=True):
         """
         dataset_folder: Path to the folder containing the flower images.
         extractor: An instance of FeatureExtractor to process images.
@@ -111,6 +125,14 @@ class CBIRSystem:
         self.image_features = {}  # Dictionary: {image_path: feature_vector}
         self.limit = limit
         self.load_dataset()
+        self.use_weights = use_weights
+        self.weights = None
+        self.lr = 0.001
+        self.beta = 0.5
+        self.grad = None
+        self.metric = metric
+        if self.use_weights and self.metric not in ["manhattan", "euclidean"]:
+            raise ValueError(f"Metric must be either 'manhattan' or 'euclidean' if finetuning is enabled")
 
 
     def load_dataset(self):
@@ -139,35 +161,47 @@ class CBIRSystem:
                     image_counter += 1
                 pbar.update(1)  # Update progress bar
 
-    def retrieve_similar_images(self, query_image_path, top_k=10, metric="manhattan"):
+    def retrieve_similar_images(self, query_image_path, top_k=10):
         """
         Given a query image, extract its features and return the top_k most similar images.
         Similarity is measured via the Euclidean distance.
         """
         query_image = self.extractor.preprocess_image(query_image_path)
         query_features = self.extractor.extract_features(query_image)
+        if self.use_weights is True and self.weights is None:
+            self.weights = np.ones(query_features.shape)
+            a,b = self.extractor.output_info
+            self.weights[0:a] = 0.7 / a
+            self.weights[a+1:a+b] = 0.3 / b
 
         results = []
         for image_path, features in self.image_features.items():
             # Euclidean distance: lower distance means higher similarit
-            if metric == "euclidean":
-                # Using SciPy’s Euclidean distance implementation
-                distance = euclidean(query_features, features)
+            if self.metric == "euclidean":
+                if self.weights is not None:
+                    # Compute weighted Euclidean distance as sqrt(sum_i w_i * (x_i-y_i)^2)
+                    diff = query_features - features
+                    distance = np.sqrt(np.sum(self.weights * (diff ** 2)))
+                else:
+                    distance = euclidean(query_features, features)
 
-            elif metric == "cosine":
+            elif self.metric == "manhattan":
+                if self.weights is not None:
+                    # Weighted Manhattan distance: sum_i (w_i * |x_i-y_i|)
+                    distance = np.sum(self.weights * np.abs(query_features - features))
+                else:
+                    distance = cityblock(query_features, features)
+
+            elif self.metric == "cosine":
                 # Using SciPy’s cosine distance (which returns 1 - cosine similarity)
                 distance = cosine(query_features, features)
 
-            elif metric == "manhattan":
-                # Using SciPy’s Manhattan (cityblock) distance implementation
-                distance = cityblock(query_features, features)
-
-            elif metric == "histogram intersection":
+            elif self.metric == "histogram intersection":
                 distance = 1 - cv2.compareHist(query_features.astype(np.float32),
                                                features.astype(np.float32),
                                                cv2.HISTCMP_INTERSECT)
 
-            elif metric == "chi-square":
+            elif self.metric == "chi-square":
                 distance = cv2.compareHist(query_features.astype(np.float32),
                                            features.astype(np.float32),
                                            cv2.HISTCMP_CHISQR)
@@ -178,6 +212,71 @@ class CBIRSystem:
             results.append((image_path, features, distance))
         results.sort(key=lambda x: x[2])
         return results[:top_k]
+
+    def finetune(self, query_img, correct_imgs, incorrect_imgs):
+        """
+        Fine-tunes the weight vector by performing a gradient update based on a triplet loss.
+
+        Parameters:
+          query_img      : The query image.
+          correct_imgs   : A list of images that are similar/positive examples.
+          incorrect_imgs : A list of images that are dissimilar/negative examples.
+
+        Assumptions:
+          - self.extract_features(image) returns a feature vector for an image.
+          - self.weights is a numpy array of shape (n_features,).
+          - self.metric is either "euclidean" or "manhattan".
+          - Optionally, self.lr (learning rate) and self.margin (margin for the loss) are defined.
+        """
+        # Set hyperparameters (or use defaults)
+        epsilon = 1e-8  # small constant to avoid division by zero
+
+        # Extract features for the query, correct, and incorrect images.
+        query_image = self.extractor.preprocess_image(query_img)
+        query_features = self.extractor.extract_features(query_image)
+
+        correct_features = [self.extractor.extract_features(self.extractor.preprocess_image(img)) for img in correct_imgs]
+        incorrect_features = [self.extractor.extract_features(self.extractor.preprocess_image(img)) for img in incorrect_imgs]
+
+        # Initialize gradient accumulator for the weights.
+        grad = np.zeros_like(self.weights)
+
+        # Iterate over each positive and negative pair.
+        for pos_feat in correct_features:
+            # Compute distance and its gradient contribution for the positive (correct) example.
+            if self.metric == "euclidean":
+                diff_pos = query_features - pos_feat
+                # Weighted Euclidean distance: sqrt(sum_i w_i * (diff_i)^2)
+                pos_dist = np.sqrt(np.sum(self.weights * (diff_pos ** 2))) + epsilon
+                grad += diff_pos / pos_dist
+            elif self.metric == "manhattan":
+                diff_pos = np.abs(query_features - pos_feat)
+                # Weighted Manhattan distance: sum_i w_i * |diff_i|
+                grad += diff_pos
+            else:
+                raise ValueError("Unsupported metric: " + self.metric)
+
+        for neg_feat in incorrect_features:
+            # Compute distance and its gradient contribution for the negative (incorrect) example.
+            if self.metric == "euclidean":
+                diff_neg = query_features - neg_feat
+                neg_dist = np.sqrt(np.sum(self.weights * (diff_neg ** 2))) + epsilon
+                grad -= diff_neg / neg_dist
+            elif self.metric == "manhattan":
+                diff_neg = np.abs(query_features - neg_feat)
+                grad -= diff_neg
+            else:
+                raise ValueError("Unsupported metric: " + self.metric)
+
+        # Update the weights using a simple gradient descent step.
+        if self.grad is None:
+            self.grad = grad
+        else:
+            self.grad = self.beta * self.grad + (1 - self.beta) * grad
+        self.weights -= self.lr * self.grad
+        print(self.lr * self.grad)
+        self.weights = np.maximum(self.weights, epsilon)
+
 
 # ============================
 # Streamlit Interface for Feedback
@@ -233,6 +332,15 @@ def main():
             st.success("No more images to review.")
             st.write("Feedback:")
             st.write(st.session_state.feedback)
+            st.write("Finetuning...")
+
+            correct = [path for path, state in st.session_state.feedback.items() if state == "correct"]
+            incorrect = [path for path, state in st.session_state.feedback.items() if state == "incorrect"]
+
+            cbir_system.finetune(query_image_path, correct, incorrect)
+            st.write("Finetuning finished.")
+
+            # Optionally, allow restarting the process
             if st.button("Restart"):
                 for key in ["results", "current_index", "feedback"]:
                     if key in st.session_state:
@@ -255,6 +363,7 @@ def plot_images(image_list, title):
     else:
         axes = [axes]
 
+    # Plot each image in the mosaic
     for i, ax in enumerate(axes):
         if i < n:
             img_path, _ = image_list[i]
@@ -262,7 +371,7 @@ def plot_images(image_list, title):
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             ax.imshow(img)
             ax.axis("off")
-            ax.set_title(img_path, fontsize=8) 
+            ax.set_title(img_path, fontsize=8)
         else:
             ax.axis("off")
 
@@ -272,14 +381,17 @@ def plot_images(image_list, title):
 
 
 def debug(query_path="query_examples/6-16-526503800.jpg"):
-    for k in [4, 8, 16, 32, 64]:
-        for mode in ["hist", "hog"]:
-            for metric in ["euclidean", "cosine", "manhattan", "chi-square", "histogram intersection"]:
-                extractor = FeatureExtractor(bins=k, mode=mode)
-                cbir_system = CBIRSystem("dataset/", extractor, limit=1000)
-                results = cbir_system.retrieve_similar_images(query_path, top_k=10, metric=metric)
-                plot_images(results, title=f"CBIR Results - Bins: {k}, Mode: {mode}, Metric: {metric}")
-                print("Finished")
+
+    for k in [8]:
+        for mode in ["both"]:
+            extractor = FeatureExtractor(bins=k, mode=mode)
+            for metric in ["euclidean", "manhattan"]:
+                cbir_system = CBIRSystem("dataset/", extractor, metric=metric, use_weights=True, limit=100)
+                for it in range(19):
+                    results = cbir_system.retrieve_similar_images(query_path, top_k=6)
+                    plot_images(results, title=f"CBIR Results - Bins: {k}, Mode: {mode}, Metric: {metric}")
+                    cbir_system.finetune(query_path, [results[0][0]], [])
+                    print("Finished")
 
 
 if __name__ == "__main__":
