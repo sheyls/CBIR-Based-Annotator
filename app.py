@@ -77,10 +77,10 @@ def main():
             if col1.button("Yes"):
                 st.session_state.global_annotations.append({"image": image_path, "flower_name": reference_name})
                 st.session_state.current_index += 1
-                st.experimental_rerun()
+                st.rerun()
             if col2.button("No"):
                 st.session_state.current_index += 1
-                st.experimental_rerun()
+                st.rerun()
         else:
             st.success("Annotation session completed.")
             annotations_df = pd.DataFrame(st.session_state.global_annotations)
@@ -94,7 +94,7 @@ def main():
                 for key in ["current_results", "current_index", "reference_name"]:
                     if key in st.session_state:
                         del st.session_state[key]
-                st.experimental_rerun()
+                st.rerun()
 
 if __name__ == "__main__":
     main()
