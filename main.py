@@ -121,6 +121,7 @@ class CBIRSystem:
         self.image_features = {}  # Dictionary: {image_path: feature_vector}
         self.limit = limit
         self.load_dataset()
+        self.weights = None
 
 
     def load_dataset(self):
@@ -149,28 +150,37 @@ class CBIRSystem:
                     image_counter += 1
                 pbar.update(1)  # Update progress bar
 
-    def retrieve_similar_images(self, query_image_path, top_k=10, metric="manhattan"):
+    def retrieve_similar_images(self, query_image_path, top_k=10, metric="manhattan", use_weights=False):
         """
         Given a query image, extract its features and return the top_k most similar images.
         Similarity is measured via the Euclidean distance.
         """
         query_image = self.extractor.preprocess_image(query_image_path)
         query_features = self.extractor.extract_features(query_image)
+        if use_weights is True and self.weights is None:
+            self.weights = np.ones(query_features.shape)
 
         results = []
         for image_path, features in self.image_features.items():
             # Euclidean distance: lower distance means higher similarit
             if metric == "euclidean":
-                # Using SciPy’s Euclidean distance implementation
-                distance = euclidean(query_features, features)
+                if self.weights is not None:
+                    # Compute weighted Euclidean distance as sqrt(sum_i w_i * (x_i-y_i)^2)
+                    diff = query_features - features
+                    distance = np.sqrt(np.sum(self.weights * (diff ** 2)))
+                else:
+                    distance = euclidean(query_features, features)
+
+            elif metric == "manhattan":
+                if self.weights is not None:
+                    # Weighted Manhattan distance: sum_i (w_i * |x_i-y_i|)
+                    distance = np.sum(self.weights * np.abs(query_features - features))
+                else:
+                    distance = cityblock(query_features, features)
 
             elif metric == "cosine":
                 # Using SciPy’s cosine distance (which returns 1 - cosine similarity)
                 distance = cosine(query_features, features)
-
-            elif metric == "manhattan":
-                # Using SciPy’s Manhattan (cityblock) distance implementation
-                distance = cityblock(query_features, features)
 
             elif metric == "histogram intersection":
                 distance = 1 - cv2.compareHist(query_features.astype(np.float32),
@@ -188,6 +198,9 @@ class CBIRSystem:
             results.append((image_path, distance))
         results.sort(key=lambda x: x[1])
         return results[:top_k]
+
+    def finetune(self, query, good, bad):
+        pass
 
 # ============================
 # Streamlit Interface for Feedback
