@@ -171,8 +171,9 @@ class CBIRSystem:
         if self.use_weights is True and self.weights is None:
             self.weights = np.ones(query_features.shape)
             a,b = self.extractor.output_info
-            self.weights[0:a] = 0.7 / a
-            self.weights[a+1:a+b] = 0.3 / b
+            if a > 0 and b > 0:
+                self.weights[0:a] = 0.7 / a
+                self.weights[a+1:a+b] = 0.3 / b
 
         results = []
         for image_path, features in self.image_features.items():
