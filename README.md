@@ -17,15 +17,16 @@ The project consists of two main components:
   - Allows users to upload a query image and specify a reference flower name.
   - Retrieves similar images from a specified dataset.
   - Enables interactive annotation with feedback buttons to mark if retrieved images match the reference flower.
-  - Optionally, annotations can be saved and downloaded as a CSV file.
-    
+  - Annotations can be saved and downloaded as a CSV file.
+
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/05a99749-525a-4a88-bd6c-02a63f79e8d1" width="800"/>
+  <img src="https://github.com/user-attachments/assets/5187d423-ab3c-44db-b64b-70fac5fc5d9f" width="800"/>
 </p>
 
+![5](h)
 
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/1af3de8e-c76c-40d8-8071-95c5208bb003" width="800"/>
+  <img src="https://github.com/user-attachments/assets/b41a55df-bb91-4d2f-80d5-c002e5a07f3d" width="800"/>
 </p>
 
 ## Use
